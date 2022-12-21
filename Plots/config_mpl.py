@@ -20,13 +20,11 @@ mpl.rcParams.update({
     "text.usetex": True,     # use inline math for ticks
     "pgf.texsystem" : "xelatex",
     "pgf.rcfonts": False,    # don't setup fonts from rc parameters
-#    'ps.fonttype': 42,
-#    'pdf.fonttype': 42
 })
 
 
-# Load text from file
-with open('../../2022_JPaper_BLL_LogMarginalLikelihood/tex/config/notation.tex', 'r') as f:
+# Load notation from file. The same notation is used in the paper.
+with open('../Plots/notation.tex', 'r') as f:
     tex_preamble = f.readlines()
 
 tex_preamble = ''.join(tex_preamble)

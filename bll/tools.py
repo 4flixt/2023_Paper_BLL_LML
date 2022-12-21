@@ -3,6 +3,7 @@ from sklearn.model_selection import train_test_split
 import pdb
 from sklearn import preprocessing
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 
 class Scaler:
     """Simple wrapper for the sklearn ``preprocessing.StandardScaler`` class.
@@ -285,3 +286,54 @@ def draw_neural_net(ax, left, right, bottom, top, layer_sizes, line_width=1):
                 line = plt.Line2D([n*h_spacing + left, (n + 1)*h_spacing + left],
                                   [layer_top_a - m*v_spacing, layer_top_b - o*v_spacing], c='k', lw=line_width, alpha=0.5)
                 ax.add_artist(line)
+
+
+
+def plot_alpha_search(result_train, result_test, alpha_opt, alpha_max, **kwargs):
+    """Helper function that can be used with the results of the alpha search for BLL and BLR.
+    In both cases, the method ``grid_search_alpha`` returns a dictionary that can be passed either as:
+    - ``result_train``: the results of the training set
+    - ``result_test``: the results of the test set
+
+    The type of scores that are in the dictionary are considered and the plot is adapted accordingly.
+
+    Keyword arguments are passed to ``plt.subplots``. This can be used e.g. to set the figure size.
+    
+    """
+    
+    color = mpl.rcParams['axes.prop_cycle'].by_key()['color']
+
+    log_alpha_test = result_test['log_alpha']
+    log_alpha_train = result_train['log_alpha']
+
+    scores_test = list(result_test.keys())
+    scores_train = list(result_train.keys())
+
+    assert scores_test == scores_train, 'Not the same metrics for train and test'
+
+    scores_test.remove('log_alpha')
+    scores_train.remove('log_alpha')
+
+    fig, ax = plt.subplots(len(scores_test), **kwargs)
+    ax_twins = []
+
+    for i, score in enumerate(scores_test):
+        ax[i].plot(log_alpha_test, result_test[score], color=color[0], label='test')
+        ax[i].set_xlabel('$\log(\\alpha)$')
+        ax[i].set_ylabel(score + ' (test)', color=color[0])
+        ax[i].tick_params(axis='y', color=color[0], labelcolor=color[0])
+
+        ax_twins.append(ax[i].twinx())
+        ax_twins[-1].plot(log_alpha_train, result_train[score], color=color[1], label='train')
+        ax_twins[-1].set_ylabel(score + ' (train)', color=color[1])
+        ax_twins[-1].tick_params(axis='y', color=color[1], labelcolor=color[1])
+
+        ax[i].axvline(alpha_opt, color='k', linestyle='--', label='opt')
+        ax[i].axvline(alpha_max, color='k', linestyle='-', label='max')
+    
+    ax[0].legend()
+    ax[0].set_title('Grid search for $\log(\\alpha)$')
+    ax[-1].set_xlabel('$\log(\\alpha)$')
+    
+
+    return fig, ax
