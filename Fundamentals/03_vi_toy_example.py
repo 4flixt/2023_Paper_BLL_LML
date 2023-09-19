@@ -50,20 +50,22 @@ def get_output_noise_model(n_y: int) -> tf.keras.Model:
 # %%
 
 def trainable_prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
-  n = kernel_size + bias_size
-  return tf.keras.Sequential([
-      tfp.layers.VariableLayer(n, dtype=dtype),
-      tfp.layers.DistributionLambda(lambda t: tfd.Independent(
-          tfd.Normal(loc=t, scale=1),
-          reinterpreted_batch_ndims=1)),
-  ])
+    n = kernel_size + bias_size
+    c = np.log(np.expm1(1.))
+    return tf.keras.Sequential([
+        tfp.layers.VariableLayer(2*n, dtype=dtype),
+        tfp.layers.DistributionLambda(lambda t: tfd.Independent(
+            tfd.Normal(loc=t[..., :n],
+                        scale=tf.math.exp(t[..., n:])),
+            reinterpreted_batch_ndims=1)),
+    ])
 
 def prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
     n = kernel_size + bias_size # num of params
     return tf.keras.Sequential([
        tfpl.DistributionLambda(
             lambda t: tfd.Independent(
-                tfd.Normal(loc = tf.zeros(n), scale= 2*tf.ones(n)),
+                tfd.Normal(loc = tf.zeros(n), scale= 1*tf.ones(n)),
                 reinterpreted_batch_ndims=1)
        )                     
   ])
@@ -76,7 +78,7 @@ def posterior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
         tfp.layers.VariableLayer(2 * n, dtype=dtype),
         tfp.layers.DistributionLambda(lambda t: tfd.Independent(
             tfd.Normal(loc=t[..., :n],
-                        scale=1e-5 + tf.nn.softplus(c + t[..., n:])),
+                        scale=tf.math.exp(t[..., n:])),
             reinterpreted_batch_ndims=1)),
     ])
 
@@ -105,6 +107,7 @@ scaler  = tools.Scaler(*train)
 # Scale data (only required for testing purposes)
 train_scaled = scaler.scale(*train)
 val_scaled = scaler.scale(*val)
+true_scaled = scaler.scale(*true)
 
 def get_figure(n_channels=n_channels):
     # Plot data
@@ -144,7 +147,7 @@ def get_bnn_model(m, full_bnn = True):
     output_kwargs = {
         'units': 2,
         'activation': 'linear',
-        'make_prior_fn': prior,
+        'make_prior_fn': trainable_prior,
         'make_posterior_fn': posterior,
         'kl_weight': 1/m,
     }
@@ -177,6 +180,13 @@ def get_bnn_model(m, full_bnn = True):
     sigma_y_multiplier = tf.keras.Input(shape=(2,))
     output_with_noise = get_output_noise_model(2)([output_model.output, sigma_y_multiplier])
 
+    # output_with_noise = tfp.layers.DistributionLambda(
+    #     lambda t: tfd.Independent(
+    #     tfd.Normal(loc=t, scale=1),
+    #     reinterpreted_batch_ndims=1)
+    # )(output_model.output)
+    
+
     output_with_noise_model = keras.Model(inputs=[model_input, sigma_y_multiplier], outputs=output_with_noise)
 
 
@@ -187,11 +197,36 @@ negloglik = lambda y, p_y: -p_y.log_prob(y)
 
 bnn_model = get_bnn_model(train[0].shape[0], full_bnn=True)
 
+bnn_model.summary()
+# %%
 bnn_model.compile(
-    optimizer=tf.optimizers.Adam(learning_rate=0.01),
+    optimizer=tf.optimizers.Adam(learning_rate=0.001),
     loss=negloglik,
     metrics=['mse'],
 )
 # %%
-bnn_model.summary()
+hist = bnn_model.fit(
+    x=[train_scaled[0], np.ones((train_scaled[0].shape[0], 1))],
+    y=train_scaled[1],
+    epochs=1000,
+    verbose=1
+)
 # %%
+unscale = scaler.scaler_y.inverse_transform
+samples = 10
+Y_samp = [unscale(bnn_model([true_scaled[0], np.ones((true_scaled[0].shape[0],1))]).mean().numpy()) for _ in range(samples)]
+Y_samp = np.stack(Y_samp, axis=2)
+Y_std = unscale(bnn_model([true_scaled[0], np.ones((true_scaled[0].shape[0],1))]).stddev().numpy())
+Y_std = np.repeat(Y_std[:,:, np.newaxis], samples, axis=2)
+
+y_p3std = np.max(Y_samp + 3*Y_std, axis=2)
+y_m3std = np.min(Y_samp - 3*Y_std, axis=2)
+
+# %%
+fig, ax = get_figure()
+ax[0].plot(true[0], Y_samp[:,0,:], color='C0', alpha=0.5)
+ax[1].plot(true[0], Y_samp[:,1,:], color='C0', alpha=0.5)
+ax[0].fill_between(true[0].flatten(), y_m3std[:,0], y_p3std[:,0], color='C0', alpha=0.3)
+ax[1].fill_between(true[0].flatten(), y_m3std[:,1], y_p3std[:,1], color='C0', alpha=0.3)
+# %%
+np.exp(bnn_model.layers[-1].trainable_variables[0].numpy())
