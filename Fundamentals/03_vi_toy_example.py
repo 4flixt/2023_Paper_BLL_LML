@@ -70,23 +70,12 @@ def trainable_sig_prior(kernel_size: int, bias_size: int, dtype=None) -> tf.kera
             reinterpreted_batch_ndims=1)),
     ])
 
-def trainable_prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
-    n = kernel_size + bias_size
-    c = np.log(np.expm1(1.))
-    return tf.keras.Sequential([
-        tfp.layers.VariableLayer(2 * n, dtype=dtype, initializer='zeros'),
-        tfp.layers.DistributionLambda(lambda t: tfd.Independent(
-            tfd.Normal(loc=t[..., :n],
-                        scale=tf.math.exp(t[..., n:])),
-            reinterpreted_batch_ndims=1)),
-    ])
-
 def prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
     n = kernel_size + bias_size # num of params
     return tf.keras.Sequential([
        tfpl.DistributionLambda(
             lambda t: tfd.Independent(
-                tfd.Normal(loc = tf.zeros(n), scale= 2*tf.ones(n)),
+                tfd.Normal(loc = tf.zeros(n), scale= 1*tf.ones(n)),
                 reinterpreted_batch_ndims=1)
        )                     
   ])
@@ -99,7 +88,7 @@ def posterior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
         tfp.layers.VariableLayer(2 * n, dtype=dtype, initializer='normal'),
         tfp.layers.DistributionLambda(lambda t: tfd.Independent(
             tfd.Normal(loc=t[..., :n],
-                scale=1e-5 + 0.003 * tf.nn.softplus(t[..., n:])),
+                scale=1e-5 + 0.003 * tf.math.exp(t[..., n:]-1)),
             reinterpreted_batch_ndims=1)),
     ])
 
@@ -216,16 +205,24 @@ bnn_model.summary()
 
 # %%
 bnn_model.compile(
-    optimizer=tf.optimizers.Adam(learning_rate=0.01),
+    optimizer=tf.optimizers.Adam(learning_rate=0.005),
     loss=negloglik,
     metrics=['mse'],
 )
 # %%
+
+early_stopping_callback = tf.keras.callbacks.EarlyStopping(
+    monitor='mse',
+    patience=200,
+    restore_best_weights=True,
+)
+
 hist = bnn_model.fit(
     x=[train_scaled[0], np.ones((train_scaled[0].shape[0], 1))],
     y=train_scaled[1],
     epochs=1000,
-    verbose=1
+    verbose=1,
+    callbacks=[early_stopping_callback],
 )
 # %%
 unscale_std = lambda scaled: scaler.scaler_y.scale_*scaled
@@ -249,4 +246,6 @@ ax[1].fill_between(true[0].flatten(), y_m3std[:,1], y_p3std[:,1], color='C0', al
 np.exp(bnn_model.layers[-1].trainable_variables[0].numpy())
 # %%
 
-bnn_model.layers[-4].trainable_variables
+
+
+# %%
