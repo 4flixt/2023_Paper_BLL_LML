@@ -197,7 +197,7 @@ def get_bnn_model(m, full_bnn = True):
     return output_with_noise_model
 
 
-negloglik = lambda y, p_y: -tf.reduce_sum(p_y.log_prob(y))
+negloglik = lambda y, p_y: -tf.reduce_mean(p_y.log_prob(y))
 
 batch_size = train[0].shape[0]
 
