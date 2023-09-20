@@ -17,83 +17,8 @@ import tools
 
 from typing import List, Callable, Tuple, Optional
 
-# %%
-
-def get_output_noise_model(n_y: int) -> tf.keras.Model:
-    """
-    Returns a keras model that takes as input:
-    - ``mu_y``: a tensor of shape (batch_size, n_y) with the mean of the output
-    - ``rho_y``: a tensor of shape (batch_size, 1) which serves as a multiplicative 
-    factor for the standard deviation of the output.
-    The output is a distribution of shape (batch_size, n_y) with mean ``mu_y`` and
-    standard deviation ``rho_y*sig_y``.
-    """
-
-    mu_y = tf.keras.Input(shape=(n_y,))
-    rho_y = tf.keras.Input(shape=(1,))
-
-    # sigma_y is created as a variable layer 
-    sig_y = tfpl.VariableLayer(shape=(n_y,), initializer='zeros', activation=tf.math.exp)(rho_y)*rho_y
-
-    cat_mu_y_and_sig_y = tf.keras.layers.Concatenate(axis=1)([mu_y, sig_y])
-
-    dist = tfp.layers.DistributionLambda(
-        lambda t: tfd.Independent(
-        tfd.Normal(loc=t[..., :n_y], scale=t[..., n_y:]),
-        reinterpreted_batch_ndims=1)
-    )(cat_mu_y_and_sig_y)
-
-    return keras.models.Model(inputs=[mu_y, rho_y], outputs=dist)
-
-
-# %%
-
-def trainable_sig_prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
-    n = kernel_size + bias_size
-    c = np.log(np.expm1(1.))
-    return tf.keras.Sequential([
-        tfp.layers.VariableLayer(n, dtype=dtype, initializer='zeros'),
-        tfp.layers.DistributionLambda(lambda t: tfd.Independent(
-            tfd.Normal(loc=tf.zeros(n),
-                        scale=tf.math.exp(t)),
-        reinterpreted_batch_ndims=1)),
-    ])
-
-def trainable_mu_prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
-    n = kernel_size + bias_size
-    c = np.log(np.expm1(1.))
-    return tf.keras.Sequential([
-        tfp.layers.VariableLayer(n, dtype=dtype, initializer='zeros'),
-        tfpl.DistributionLambda(
-                lambda t: tfd.Normal(loc = t, scale= 1*tf.ones(n)),
-        )     
-    ])
-
-
-def prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
-    n = kernel_size + bias_size # num of params
-    return tf.keras.Sequential([
-       tfpl.DistributionLambda(
-            lambda t: tfd.Independent(
-                tfd.Normal(loc = tf.zeros(n), scale= 1*tf.ones(n)),
-       reinterpreted_batch_ndims=1))                  
-  ])
-
-# Specify the surrogate posterior over `keras.layers.Dense` `kernel` and `bias`.
-def posterior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
-    n = kernel_size + bias_size
-    c = np.log(np.expm1(1.))
-    return tf.keras.Sequential([
-        tfp.layers.VariableLayer(2 * n, dtype=dtype, initializer='normal'),
-        tfp.layers.DistributionLambda(lambda t: tfd.Independent(
-            tfd.Normal(loc=t[..., :n],
-                scale=0.003 * tf.math.exp(t[..., n:]-2)),
-            reinterpreted_batch_ndims=1))
-    ])
-
-
-_dist_type = Callable[[int, int, Optional[tf.dtypes.DType]], tf.keras.Model]
-
+# %% [markdown]
+# # Toy example
 
 # %%
 
@@ -136,13 +61,94 @@ def get_figure(n_channels=n_channels):
 
     return fig, ax
 
+get_figure()
+
+# %%
+
+def get_output_noise_model(n_y: int) -> tf.keras.Model:
+    """
+    Returns a keras model that takes as input:
+    - ``mu_y``: a tensor of shape (batch_size, n_y) with the mean of the output
+    - ``rho_y``: a tensor of shape (batch_size, 1) which serves as a multiplicative 
+    factor for the standard deviation of the output.
+    The output is a distribution of shape (batch_size, n_y) with mean ``mu_y`` and
+    standard deviation ``rho_y*sig_y``.
+    """
+
+    mu_y = tf.keras.Input(shape=(n_y,))
+    rho_y = tf.keras.Input(shape=(1,))
+
+    # sigma_y is created as a variable layer 
+    sig_y = tfpl.VariableLayer(shape=(n_y,), initializer='zeros', activation=tf.math.exp)(rho_y)*rho_y
+
+    cat_mu_y_and_sig_y = tf.keras.layers.Concatenate(axis=1)([mu_y, sig_y])
+
+    dist = tfp.layers.DistributionLambda(
+        lambda t: tfd.Independent(
+        tfd.Normal(loc=t[..., :n_y], scale=t[..., n_y:]),
+        reinterpreted_batch_ndims=1)
+    )(cat_mu_y_and_sig_y)
+
+    return keras.models.Model(inputs=[mu_y, rho_y], outputs=dist)
+
+
+# %%
+
+def trainable_sig_prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
+    """
+    Returns a keras model to represent a prior distribution 
+    for the model weights (kernel) and biases. 
+    The distribution is a Normal distribution with trainable variance.
+    
+    - The trainable parameter theta is initialized to zero and is transformed to be positive with 
+    the function exp(theta). In this way, the prior is initially a normal distribution with mean zero and variance one.
+    """
+    n = kernel_size + bias_size
+    c = np.log(np.expm1(1.))
+    return tf.keras.Sequential([
+        tfp.layers.VariableLayer(n, dtype=dtype, initializer='zeros'),
+        tfp.layers.DistributionLambda(lambda t: tfd.Independent(
+            tfd.Normal(loc=tf.zeros(n),
+                        scale=tf.math.exp(t)),
+        reinterpreted_batch_ndims=1)),
+    ])
+
+def prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
+    """
+    Returns a keras model to represent a prior distribution 
+    for the model weights (kernel) and biases. 
+    The distribution is a Normal distribution with fixed mean and variance.
+    """
+    n = kernel_size + bias_size # num of params
+    return tf.keras.Sequential([
+       tfpl.DistributionLambda(
+            lambda t: tfd.Independent(
+                tfd.Normal(loc = tf.zeros(n), scale= 1*tf.ones(n)),
+       reinterpreted_batch_ndims=1))                  
+  ])
+
+# Specify the surrogate posterior over `keras.layers.Dense` `kernel` and `bias`.
+def posterior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
+    n = kernel_size + bias_size
+    c = np.log(np.expm1(1.))
+    return tf.keras.Sequential([
+        tfp.layers.VariableLayer(2 * n, dtype=dtype, initializer='normal'),
+        tfp.layers.DistributionLambda(lambda t: tfd.Independent(
+            tfd.Normal(loc=t[..., :n],
+                scale=0.003 * tf.math.exp(t[..., n:]-2)),
+            reinterpreted_batch_ndims=1))
+    ])
+
 # %%
 # Fix seeds
 def get_bnn_model(m, full_bnn = True):
     np.random.seed(seed)
     tf.random.set_seed(seed)
 
-    model_input = keras.Input(shape=(train[0].shape[1],))
+    n_x = train[0].shape[1]
+    n_y = train[1].shape[1]
+
+    model_input = keras.Input(shape=(n_x,))
 
     hidden_kwargs = {
         'units': 20,
@@ -188,8 +194,11 @@ def get_bnn_model(m, full_bnn = True):
     _, model_outputs = tools.DNN_from_architecture(model_input, architecture)
     output_model = keras.Model(inputs=model_input, outputs=model_outputs[-1])
 
-    sigma_y_multiplier = tf.keras.Input(shape=(2,))
-    output_with_noise = get_output_noise_model(2)([output_model.output, sigma_y_multiplier])
+    # The sigma_y multiplier is an untrainable input that 
+    # scaled the standard deviation for each training point. 
+    # Typically, 1 is used for all points.
+    sigma_y_multiplier = tf.keras.Input(shape=(n_y,))
+    output_with_noise = get_output_noise_model(n_y)([output_model.output, sigma_y_multiplier])
 
     output_with_noise_model = keras.Model(inputs=[model_input, sigma_y_multiplier], outputs=output_with_noise)
 
