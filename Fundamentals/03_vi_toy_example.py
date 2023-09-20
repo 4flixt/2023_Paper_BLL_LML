@@ -63,10 +63,10 @@ def trainable_sig_prior(kernel_size: int, bias_size: int, dtype=None) -> tf.kera
     n = kernel_size + bias_size
     c = np.log(np.expm1(1.))
     return tf.keras.Sequential([
-        tfp.layers.VariableLayer(n, dtype=dtype, initializer='ones'),
+        tfp.layers.VariableLayer(n, dtype=dtype, initializer='zeros'),
         tfp.layers.DistributionLambda(lambda t: tfd.Independent(
             tfd.Normal(loc=tf.zeros(n),
-                        scale=tf.nn.softplus(t)),
+                        scale=tf.math.exp(t)),
             reinterpreted_batch_ndims=1)),
     ])
 
@@ -88,7 +88,7 @@ def posterior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
         tfp.layers.VariableLayer(2 * n, dtype=dtype, initializer='normal'),
         tfp.layers.DistributionLambda(lambda t: tfd.Independent(
             tfd.Normal(loc=t[..., :n],
-                scale=1e-5 + 0.003 * tf.math.exp(t[..., n:]-1)),
+                scale=0.003 * tf.math.exp(t[..., n:]-2)),
             reinterpreted_batch_ndims=1)),
     ])
 
@@ -205,7 +205,7 @@ bnn_model.summary()
 
 # %%
 bnn_model.compile(
-    optimizer=tf.optimizers.Adam(learning_rate=0.005),
+    optimizer=tf.optimizers.Adam(learning_rate=0.001),
     loss=negloglik,
     metrics=['mse'],
 )
