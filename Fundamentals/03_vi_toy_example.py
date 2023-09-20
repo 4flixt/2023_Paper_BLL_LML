@@ -96,10 +96,10 @@ def posterior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
     n = kernel_size + bias_size
     c = np.log(np.expm1(1.))
     return tf.keras.Sequential([
-        tfp.layers.VariableLayer(2 * n, dtype=dtype, initializer='zeros'),
+        tfp.layers.VariableLayer(2 * n, dtype=dtype, initializer='normal'),
         tfp.layers.DistributionLambda(lambda t: tfd.Independent(
             tfd.Normal(loc=t[..., :n],
-                        scale=tf.math.exp(t[..., n:])),
+                scale= tf.math.exp(t[..., n:])),
             reinterpreted_batch_ndims=1)),
     ])
 
@@ -158,7 +158,7 @@ def get_bnn_model(m, full_bnn = True):
     model_input = keras.Input(shape=(train[0].shape[1],))
 
     hidden_kwargs = {
-        'units': 5,
+        'units': 20,
         'activation': tf.nn.tanh,
         'make_prior_fn': trainable_sig_prior,
         'make_posterior_fn': posterior,
@@ -201,20 +201,13 @@ def get_bnn_model(m, full_bnn = True):
     sigma_y_multiplier = tf.keras.Input(shape=(2,))
     output_with_noise = get_output_noise_model(2)([output_model.output, sigma_y_multiplier])
 
-    # output_with_noise = tfp.layers.DistributionLambda(
-    #     lambda t: tfd.Independent(
-    #     tfd.Normal(loc=t, scale=1),
-    #     reinterpreted_batch_ndims=1)
-    # )(output_model.output)
-    
-
     output_with_noise_model = keras.Model(inputs=[model_input, sigma_y_multiplier], outputs=output_with_noise)
 
 
     return output_with_noise_model
 
 
-negloglik = lambda y, p_y: -p_y.log_prob(y)
+negloglik = lambda y, p_y: -tf.reduce_mean(p_y.log_prob(y))
 
 bnn_model = get_bnn_model(train[0].shape[0], full_bnn=False)
 
@@ -224,7 +217,7 @@ bnn_model.summary()
 # %%
 bnn_model.compile(
     optimizer=tf.optimizers.Adam(learning_rate=0.005),
-    loss='mse',
+    loss=negloglik,
     metrics=['mse'],
 )
 # %%
@@ -235,7 +228,7 @@ hist = bnn_model.fit(
     verbose=1
 )
 # %%
-unscale = scaler.scaler_y.inverse_transform
+unscale = lambda scaled: scaler.scaler_y.scale_*scaled
 samples = 10
 Y_samp = [unscale(bnn_model([true_scaled[0], np.ones((true_scaled[0].shape[0],1))]).mean().numpy()) for _ in range(samples)]
 Y_samp = np.stack(Y_samp, axis=2)
@@ -256,4 +249,3 @@ np.exp(bnn_model.layers[-1].trainable_variables[0].numpy())
 # %%
 
 bnn_model.layers[-4].trainable_variables
-# %%
