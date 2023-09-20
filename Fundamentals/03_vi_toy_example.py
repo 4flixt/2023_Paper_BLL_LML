@@ -52,10 +52,21 @@ def trainable_mu_prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras
     n = kernel_size + bias_size
     c = np.log(np.expm1(1.))
     return tf.keras.Sequential([
-        tfp.layers.VariableLayer(n, dtype=dtype, initializer='zeros'),
+        tfp.layers.VariableLayer(n, dtype=dtype, initializer='normal'),
         tfp.layers.DistributionLambda(lambda t: tfd.Independent(
             tfd.Normal(loc=t,
                         scale=10*tf.ones(n)),
+            reinterpreted_batch_ndims=1)),
+    ])
+
+def trainable_sig_prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
+    n = kernel_size + bias_size
+    c = np.log(np.expm1(1.))
+    return tf.keras.Sequential([
+        tfp.layers.VariableLayer(n, dtype=dtype, initializer='normal'),
+        tfp.layers.DistributionLambda(lambda t: tfd.Independent(
+            tfd.Normal(loc=tf.zeros(n),
+                        scale=tf.math.exp(t)),
             reinterpreted_batch_ndims=1)),
     ])
 
@@ -75,7 +86,7 @@ def prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
     return tf.keras.Sequential([
        tfpl.DistributionLambda(
             lambda t: tfd.Independent(
-                tfd.Normal(loc = tf.zeros(n), scale= 1*tf.ones(n)),
+                tfd.Normal(loc = tf.zeros(n), scale= 100*tf.ones(n)),
                 reinterpreted_batch_ndims=1)
        )                     
   ])
@@ -149,7 +160,7 @@ def get_bnn_model(m, full_bnn = True):
     hidden_kwargs = {
         'units': 5,
         'activation': tf.nn.tanh,
-        'make_prior_fn': trainable_mu_prior,
+        'make_prior_fn': trainable_sig_prior,
         'make_posterior_fn': posterior,
         'kl_weight': 1/m,
     }
@@ -157,7 +168,7 @@ def get_bnn_model(m, full_bnn = True):
     output_kwargs = {
         'units': 2,
         'activation': 'linear',
-        'make_prior_fn': trainable_prior,
+        'make_prior_fn': trainable_sig_prior,
         'make_posterior_fn': posterior,
         'kl_weight': 1/m,
     }
@@ -205,20 +216,22 @@ def get_bnn_model(m, full_bnn = True):
 
 negloglik = lambda y, p_y: -p_y.log_prob(y)
 
-bnn_model = get_bnn_model(train[0].shape[0], full_bnn=True)
+bnn_model = get_bnn_model(train[0].shape[0], full_bnn=False)
 
 bnn_model.summary()
+
+
 # %%
 bnn_model.compile(
-    optimizer=tf.optimizers.Adam(learning_rate=0.01),
-    loss=negloglik,
+    optimizer=tf.optimizers.Adam(learning_rate=0.005),
+    loss='mse',
     metrics=['mse'],
 )
 # %%
 hist = bnn_model.fit(
     x=[train_scaled[0], np.ones((train_scaled[0].shape[0], 1))],
     y=train_scaled[1],
-    epochs=3000,
+    epochs=1000,
     verbose=1
 )
 # %%
