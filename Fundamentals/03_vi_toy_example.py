@@ -55,7 +55,7 @@ def trainable_mu_prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras
         tfp.layers.VariableLayer(n, dtype=dtype, initializer='normal'),
         tfp.layers.DistributionLambda(lambda t: tfd.Independent(
             tfd.Normal(loc=t,
-                        scale=10*tf.ones(n)),
+                        scale=2*tf.ones(n)),
             reinterpreted_batch_ndims=1)),
     ])
 
@@ -63,10 +63,10 @@ def trainable_sig_prior(kernel_size: int, bias_size: int, dtype=None) -> tf.kera
     n = kernel_size + bias_size
     c = np.log(np.expm1(1.))
     return tf.keras.Sequential([
-        tfp.layers.VariableLayer(n, dtype=dtype, initializer='normal'),
+        tfp.layers.VariableLayer(n, dtype=dtype, initializer='ones'),
         tfp.layers.DistributionLambda(lambda t: tfd.Independent(
             tfd.Normal(loc=tf.zeros(n),
-                        scale=tf.math.exp(t)),
+                        scale=tf.nn.softplus(t)),
             reinterpreted_batch_ndims=1)),
     ])
 
@@ -86,7 +86,7 @@ def prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
     return tf.keras.Sequential([
        tfpl.DistributionLambda(
             lambda t: tfd.Independent(
-                tfd.Normal(loc = tf.zeros(n), scale= 100*tf.ones(n)),
+                tfd.Normal(loc = tf.zeros(n), scale= 2*tf.ones(n)),
                 reinterpreted_batch_ndims=1)
        )                     
   ])
@@ -99,7 +99,7 @@ def posterior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
         tfp.layers.VariableLayer(2 * n, dtype=dtype, initializer='normal'),
         tfp.layers.DistributionLambda(lambda t: tfd.Independent(
             tfd.Normal(loc=t[..., :n],
-                scale= tf.math.exp(t[..., n:])),
+                scale=1e-5 + 0.003 * tf.nn.softplus(t[..., n:])),
             reinterpreted_batch_ndims=1)),
     ])
 
@@ -160,7 +160,7 @@ def get_bnn_model(m, full_bnn = True):
     hidden_kwargs = {
         'units': 20,
         'activation': tf.nn.tanh,
-        'make_prior_fn': trainable_sig_prior,
+        'make_prior_fn': prior,
         'make_posterior_fn': posterior,
         'kl_weight': 1/m,
     }
@@ -209,14 +209,14 @@ def get_bnn_model(m, full_bnn = True):
 
 negloglik = lambda y, p_y: -tf.reduce_mean(p_y.log_prob(y))
 
-bnn_model = get_bnn_model(train[0].shape[0], full_bnn=False)
+bnn_model = get_bnn_model(train[0].shape[0], full_bnn=True)
 
 bnn_model.summary()
 
 
 # %%
 bnn_model.compile(
-    optimizer=tf.optimizers.Adam(learning_rate=0.005),
+    optimizer=tf.optimizers.Adam(learning_rate=0.01),
     loss=negloglik,
     metrics=['mse'],
 )
@@ -228,11 +228,12 @@ hist = bnn_model.fit(
     verbose=1
 )
 # %%
-unscale = lambda scaled: scaler.scaler_y.scale_*scaled
+unscale_std = lambda scaled: scaler.scaler_y.scale_*scaled
+unscale = scaler.scaler_y.inverse_transform
 samples = 10
 Y_samp = [unscale(bnn_model([true_scaled[0], np.ones((true_scaled[0].shape[0],1))]).mean().numpy()) for _ in range(samples)]
 Y_samp = np.stack(Y_samp, axis=2)
-Y_std = unscale(bnn_model([true_scaled[0], np.ones((true_scaled[0].shape[0],1))]).stddev().numpy())
+Y_std = unscale_std(bnn_model([true_scaled[0], np.ones((true_scaled[0].shape[0],1))]).stddev().numpy())
 Y_std = np.repeat(Y_std[:,:, np.newaxis], samples, axis=2)
 
 y_p3std = np.max(Y_samp + 3*Y_std, axis=2)
