@@ -48,35 +48,34 @@ def get_output_noise_model(n_y: int) -> tf.keras.Model:
 
 # %%
 
-def trainable_mu_prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
-    n = kernel_size + bias_size
-    c = np.log(np.expm1(1.))
-    return tf.keras.Sequential([
-        tfp.layers.VariableLayer(n, dtype=dtype, initializer='normal'),
-        tfp.layers.DistributionLambda(lambda t: tfd.Independent(
-            tfd.Normal(loc=t,
-                        scale=2*tf.ones(n)),
-            reinterpreted_batch_ndims=1)),
-    ])
-
 def trainable_sig_prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
     n = kernel_size + bias_size
     c = np.log(np.expm1(1.))
     return tf.keras.Sequential([
         tfp.layers.VariableLayer(n, dtype=dtype, initializer='zeros'),
-        tfp.layers.DistributionLambda(lambda t: tfd.Independent(
+        tfp.layers.DistributionLambda(lambda t:
             tfd.Normal(loc=tf.zeros(n),
                         scale=tf.math.exp(t)),
-            reinterpreted_batch_ndims=1)),
+        ),
     ])
+
+def trainable_mu_prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
+    n = kernel_size + bias_size
+    c = np.log(np.expm1(1.))
+    return tf.keras.Sequential([
+        tfp.layers.VariableLayer(n, dtype=dtype, initializer='zeros'),
+        tfpl.DistributionLambda(
+                lambda t: tfd.Normal(loc = t, scale= 1*tf.ones(n)),
+        )     
+    ])
+
 
 def prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
     n = kernel_size + bias_size # num of params
     return tf.keras.Sequential([
        tfpl.DistributionLambda(
-            lambda t: tfd.Independent(
-                tfd.Normal(loc = tf.zeros(n), scale= 1*tf.ones(n)),
-                reinterpreted_batch_ndims=1)
+            lambda t: 
+                tfd.Normal(loc = tf.zeros(n), scale= 2*tf.ones(n)),
        )                     
   ])
 
@@ -86,10 +85,9 @@ def posterior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
     c = np.log(np.expm1(1.))
     return tf.keras.Sequential([
         tfp.layers.VariableLayer(2 * n, dtype=dtype, initializer='normal'),
-        tfp.layers.DistributionLambda(lambda t: tfd.Independent(
+        tfp.layers.DistributionLambda(lambda t: 
             tfd.Normal(loc=t[..., :n],
-                scale=0.003 * tf.math.exp(t[..., n:]-2)),
-            reinterpreted_batch_ndims=1)),
+                scale=0.003 * tf.math.exp(t[..., n:]-2)))
     ])
 
 
@@ -137,7 +135,6 @@ def get_figure(n_channels=n_channels):
 
     return fig, ax
 
-fig, ax = get_figure()
 # %%
 # Fix seeds
 def get_bnn_model(m, full_bnn = True):
@@ -166,8 +163,11 @@ def get_bnn_model(m, full_bnn = True):
     # Hidden units
         architecture = [
             (tfpl.DenseVariational, hidden_kwargs),
+            (keras.layers.BatchNormalization, {}),
             (tfpl.DenseVariational, hidden_kwargs),
+            (keras.layers.BatchNormalization, {}),
             (tfpl.DenseVariational, hidden_kwargs),
+            (keras.layers.BatchNormalization, {}),
         ]
     else:
         hidden_kwargs.pop('make_prior_fn')
@@ -243,7 +243,7 @@ ax[1].plot(true[0], Y_samp[:,1,:], color='C0', alpha=0.5)
 ax[0].fill_between(true[0].flatten(), y_m3std[:,0], y_p3std[:,0], color='C0', alpha=0.3)
 ax[1].fill_between(true[0].flatten(), y_m3std[:,1], y_p3std[:,1], color='C0', alpha=0.3)
 # %%
-np.exp(bnn_model.layers[-1].trainable_variables[0].numpy())
+unscale_std(np.exp(bnn_model.layers[-1].trainable_variables[0].numpy()))
 # %%
 
 
