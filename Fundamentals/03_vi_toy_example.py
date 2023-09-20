@@ -35,25 +35,35 @@ def get_output_noise_model(n_y: int) -> tf.keras.Model:
     # sigma_y is created as a variable layer 
     sig_y = tfpl.VariableLayer(shape=(n_y,), initializer='zeros', activation=tf.math.exp)(rho_y)*rho_y
 
-    
-    cat_mu_sig_y = tf.keras.layers.Concatenate(axis=1)([mu_y, sig_y])
+    cat_mu_y_and_sig_y = tf.keras.layers.Concatenate(axis=1)([mu_y, sig_y])
 
     dist = tfp.layers.DistributionLambda(
         lambda t: tfd.Independent(
         tfd.Normal(loc=t[..., :n_y], scale=t[..., n_y:]),
         reinterpreted_batch_ndims=1)
-    )(cat_mu_sig_y)
+    )(cat_mu_y_and_sig_y)
 
     return keras.models.Model(inputs=[mu_y, rho_y], outputs=dist)
 
 
 # %%
 
+def trainable_mu_prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
+    n = kernel_size + bias_size
+    c = np.log(np.expm1(1.))
+    return tf.keras.Sequential([
+        tfp.layers.VariableLayer(n, dtype=dtype, initializer='zeros'),
+        tfp.layers.DistributionLambda(lambda t: tfd.Independent(
+            tfd.Normal(loc=t,
+                        scale=10*tf.ones(n)),
+            reinterpreted_batch_ndims=1)),
+    ])
+
 def trainable_prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
     n = kernel_size + bias_size
     c = np.log(np.expm1(1.))
     return tf.keras.Sequential([
-        tfp.layers.VariableLayer(2*n, dtype=dtype),
+        tfp.layers.VariableLayer(2 * n, dtype=dtype, initializer='zeros'),
         tfp.layers.DistributionLambda(lambda t: tfd.Independent(
             tfd.Normal(loc=t[..., :n],
                         scale=tf.math.exp(t[..., n:])),
@@ -75,7 +85,7 @@ def posterior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
     n = kernel_size + bias_size
     c = np.log(np.expm1(1.))
     return tf.keras.Sequential([
-        tfp.layers.VariableLayer(2 * n, dtype=dtype),
+        tfp.layers.VariableLayer(2 * n, dtype=dtype, initializer='zeros'),
         tfp.layers.DistributionLambda(lambda t: tfd.Independent(
             tfd.Normal(loc=t[..., :n],
                         scale=tf.math.exp(t[..., n:])),
@@ -137,9 +147,9 @@ def get_bnn_model(m, full_bnn = True):
     model_input = keras.Input(shape=(train[0].shape[1],))
 
     hidden_kwargs = {
-        'units': 20,
+        'units': 5,
         'activation': tf.nn.tanh,
-        'make_prior_fn': prior,
+        'make_prior_fn': trainable_mu_prior,
         'make_posterior_fn': posterior,
         'kl_weight': 1/m,
     }
@@ -200,7 +210,7 @@ bnn_model = get_bnn_model(train[0].shape[0], full_bnn=True)
 bnn_model.summary()
 # %%
 bnn_model.compile(
-    optimizer=tf.optimizers.Adam(learning_rate=0.001),
+    optimizer=tf.optimizers.Adam(learning_rate=0.01),
     loss=negloglik,
     metrics=['mse'],
 )
@@ -208,7 +218,7 @@ bnn_model.compile(
 hist = bnn_model.fit(
     x=[train_scaled[0], np.ones((train_scaled[0].shape[0], 1))],
     y=train_scaled[1],
-    epochs=1000,
+    epochs=3000,
     verbose=1
 )
 # %%
@@ -230,3 +240,7 @@ ax[0].fill_between(true[0].flatten(), y_m3std[:,0], y_p3std[:,0], color='C0', al
 ax[1].fill_between(true[0].flatten(), y_m3std[:,1], y_p3std[:,1], color='C0', alpha=0.3)
 # %%
 np.exp(bnn_model.layers[-1].trainable_variables[0].numpy())
+# %%
+
+bnn_model.layers[-4].trainable_variables
+# %%
