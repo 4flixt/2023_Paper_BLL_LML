@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tensorflow import keras
 from functools import partial
+import pandas as pd
 
 from tensorflow_probability import distributions as tfd
 from tensorflow_probability import layers as tfpl
@@ -140,7 +141,7 @@ def prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
        tfpl.DistributionLambda(
             lambda t: 
         # tfd.Independent(
-                tfd.Normal(loc = tf.zeros(n), scale= 1*tf.ones(n)),
+                tfd.Normal(loc = tf.zeros(n), scale= .5*tf.ones(n)),
     #    reinterpreted_batch_ndims=1)
        )                  
   ])
@@ -182,7 +183,7 @@ def get_bnn_model(m, full_bnn = True):
     output_kwargs = {
         'units': 2,
         'activation': 'linear',
-        'make_prior_fn': trainable_sig_prior,
+        'make_prior_fn': prior,
         'make_posterior_fn': posterior,
         'kl_weight': 1/m,
     }
@@ -227,9 +228,13 @@ def get_bnn_model(m, full_bnn = True):
     return output_with_noise_model
 
 
-negloglik = lambda y, p_y: -tf.reduce_mean(p_y.log_prob(y))
 
-batch_size = train[0].shape[0]
+
+n_batches = 1
+batch_size = train[0].shape[0]//n_batches
+
+
+negloglik = lambda y, p_y: -n_batches*tf.reduce_mean(p_y.log_prob(y))
 
 bnn_model = get_bnn_model(batch_size, full_bnn=True)
 
@@ -243,9 +248,9 @@ bnn_model.compile(
 )
 # %%
 
-savename = '02_bnn_model_weights.h5'
+savename = '01_bnn_model_weights.h5'
 savepath = os.path.join('.', 'results')
-if True:
+if False:
     hist = bnn_model.fit(
         x=[train_scaled[0], np.ones((train_scaled[0].shape[0], 1))],
         y=train_scaled[1],
@@ -254,7 +259,7 @@ if True:
         batch_size=batch_size,
         # callbacks=[early_stopping_callback],
     )
-    # bnn_model.save_weights(os.path.join(savepath, savename))
+    bnn_model.save_weights(os.path.join(savepath, savename))
 else:
     bnn_model.load_weights(os.path.join(savepath, savename))
 
@@ -282,24 +287,36 @@ ax[1].fill_between(true[0].flatten(), y_m3std[:,1], y_p3std[:,1], color='C0', al
 
 # ax[0].set_ylim([-1.5, 1.5])
 # ax[1].set_ylim([-2, 2])
-# %%
-unscale_std(np.exp(bnn_model.layers[-1].trainable_variables[0].numpy()))
-# %%
-y_pred = bnn_model([train_scaled[0], np.ones((train_scaled[0].shape[0],1))])
-
+# %% [markdown]
+# ## Check estimated noise variances
 
 # %%
+est_sig_y = unscale_std(np.exp(bnn_model.layers[-1].trainable_variables[0].numpy()))
+
+print(f'Estimated noise std: {np.round(est_sig_y, 3)}')
+print(f'True noise std:      {np.round(sigma_noise, 3)}')
+# %%
+
+
+# %% [markdown]
+# ## Understanding the prior and posterior distributions
 
 # %%
 
-w0 = bnn_model.layers[1].weights[0]
-
-mu_w0 = w0[:40]
-rho_w0 = w0[40:]
+w0 = bnn_model.layers[3].weights[0]
+n = w0.shape[0]//2
+mu_w0 = w0[:n]
+rho_w0 = w0[n:]
 sig_w0 = bijection_std_posterior(rho_w0)
 
-sig_w0
-# %%
 
-mu_w0
+fig, ax = plt.subplots()
+
+df = pd.DataFrame({'mean': np.abs(mu_w0.numpy()), 'stddev': sig_w0.numpy()})
+df.plot(x='stddev', y='mean', kind='scatter', ax=ax, label='posterior', color='C0')
+ax.scatter(0.5, 0, color='C1', label='prior', s=100, marker='x')
+ax.legend()
+ax.set_title('Posterior vs prior distribution of weights')
+
+
 # %%
