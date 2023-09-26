@@ -4,6 +4,7 @@ import tensorflow_probability as tfp
 import numpy as np
 import matplotlib.pyplot as plt
 from tensorflow import keras
+from functools import partial
 
 from tensorflow_probability import distributions as tfd
 from tensorflow_probability import layers as tfpl
@@ -30,8 +31,8 @@ sigma_noise = [5e-2, 2e-1]
 n_channels = len(function_types)
 
 train = tools.get_data(n_samples,[0,1], function_type=function_types, sigma=sigma_noise, dtype='float32', random_seed=seed)
-test= tools.get_data(100, [-.4,1.4],   function_type=function_types, sigma=sigma_noise, dtype='float32', random_seed=seed)
-true = tools.get_data(300, [-.4,1.4],  function_type=function_types, sigma=[0.,0.], dtype='float32')
+test= tools.get_data(100, [-.5,1.5],   function_type=function_types, sigma=sigma_noise, dtype='float32', random_seed=seed)
+true = tools.get_data(300, [-.5,1.5],  function_type=function_types, sigma=[0.,0.], dtype='float32')
 
 train, val = tools.split(train, test_size=0.2)
 
@@ -84,7 +85,8 @@ def get_output_noise_model(n_y: int) -> tf.keras.Model:
     cat_mu_y_and_sig_y = tf.keras.layers.Concatenate(axis=1)([mu_y, sig_y])
 
     dist = tfp.layers.DistributionLambda(
-        lambda t: tfd.Independent(
+        lambda t: 
+        tfd.Independent(
         tfd.Normal(loc=t[..., :n_y], scale=t[..., n_y:]),
         reinterpreted_batch_ndims=1)
     )(cat_mu_y_and_sig_y)
@@ -93,6 +95,17 @@ def get_output_noise_model(n_y: int) -> tf.keras.Model:
 
 
 # %%
+
+def bijection_std(x: tf.Tensor, a=1.0, b=0.0) -> tf.Tensor:
+    """
+    Returns a transformation of the input tensor x such that the output is positive.
+    """
+    return a * tf.math.exp(x+b)
+
+# Define two parameterizations of the bijection function
+bijection_std_output    = partial(bijection_std, a=1.0,   b=0.0)
+bijection_std_posterior = partial(bijection_std, a=0.003, b=-2.0)
+
 
 def trainable_sig_prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
     """
@@ -107,11 +120,14 @@ def trainable_sig_prior(kernel_size: int, bias_size: int, dtype=None) -> tf.kera
     c = np.log(np.expm1(1.))
     return tf.keras.Sequential([
         tfp.layers.VariableLayer(n, dtype=dtype, initializer='zeros'),
-        tfp.layers.DistributionLambda(lambda t: tfd.Independent(
+        tfp.layers.DistributionLambda(lambda t: 
+            # tfd.Independent(
             tfd.Normal(loc=tf.zeros(n),
-                        scale=tf.math.exp(t)),
-        reinterpreted_batch_ndims=1)),
+                        scale=bijection_std_output(t)),
+            # reinterpreted_batch_ndims=1)
+            ),
     ])
+
 
 def prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
     """
@@ -122,10 +138,13 @@ def prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
     n = kernel_size + bias_size # num of params
     return tf.keras.Sequential([
        tfpl.DistributionLambda(
-            lambda t: tfd.Independent(
+            lambda t: 
+        # tfd.Independent(
                 tfd.Normal(loc = tf.zeros(n), scale= 1*tf.ones(n)),
-       reinterpreted_batch_ndims=1))                  
+    #    reinterpreted_batch_ndims=1)
+       )                  
   ])
+
 
 # Specify the surrogate posterior over `keras.layers.Dense` `kernel` and `bias`.
 def posterior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
@@ -133,10 +152,12 @@ def posterior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
     c = np.log(np.expm1(1.))
     return tf.keras.Sequential([
         tfp.layers.VariableLayer(2 * n, dtype=dtype, initializer='normal'),
-        tfp.layers.DistributionLambda(lambda t: tfd.Independent(
+        tfp.layers.DistributionLambda(lambda t: 
+            # tfd.Independent(
             tfd.Normal(loc=t[..., :n],
-                scale=0.003 * tf.math.exp(t[..., n:]-2)),
-            reinterpreted_batch_ndims=1))
+                scale=bijection_std_posterior(t[..., n:])),
+            # reinterpreted_batch_ndims=1)
+            )
     ])
 
 # %%
@@ -221,19 +242,29 @@ bnn_model.compile(
     metrics=['mse'],
 )
 # %%
-hist = bnn_model.fit(
-    x=[train_scaled[0], np.ones((train_scaled[0].shape[0], 1))],
-    y=train_scaled[1],
-    epochs=1000,
-    verbose=1,
-    batch_size=batch_size,
-    # callbacks=[early_stopping_callback],
-)
+
+savename = '02_bnn_model_weights.h5'
+savepath = os.path.join('.', 'results')
+if True:
+    hist = bnn_model.fit(
+        x=[train_scaled[0], np.ones((train_scaled[0].shape[0], 1))],
+        y=train_scaled[1],
+        epochs=2000,
+        verbose=0,
+        batch_size=batch_size,
+        # callbacks=[early_stopping_callback],
+    )
+    # bnn_model.save_weights(os.path.join(savepath, savename))
+else:
+    bnn_model.load_weights(os.path.join(savepath, savename))
+
+
 # %%
 unscale_std = lambda scaled: scaler.scaler_y.scale_*scaled
 unscale = scaler.scaler_y.inverse_transform
 samples = 10
 
+# Y_samp = [unscale(bnn_model.predict([true_scaled[0], np.ones((true_scaled[0].shape[0],1))])) for _ in range(samples)]
 Y_samp = [unscale(bnn_model([true_scaled[0], np.ones((true_scaled[0].shape[0],1))]).mean().numpy()) for _ in range(samples)]
 Y_samp = np.stack(Y_samp, axis=2)
 Y_std = unscale_std(bnn_model([true_scaled[0], np.ones((true_scaled[0].shape[0],1))]).stddev().numpy())
@@ -243,7 +274,6 @@ Y_std = np.repeat(Y_std[:,:, np.newaxis], samples, axis=2)
 y_p3std = np.max(Y_samp + 3*Y_std, axis=2)
 y_m3std = np.min(Y_samp - 3*Y_std, axis=2)
 
-# %%
 fig, ax = get_figure()
 ax[0].plot(true[0], Y_samp[:,0,:], color='C0', alpha=0.5)
 ax[1].plot(true[0], Y_samp[:,1,:], color='C0', alpha=0.5)
@@ -256,3 +286,20 @@ ax[1].fill_between(true[0].flatten(), y_m3std[:,1], y_p3std[:,1], color='C0', al
 unscale_std(np.exp(bnn_model.layers[-1].trainable_variables[0].numpy()))
 # %%
 y_pred = bnn_model([train_scaled[0], np.ones((train_scaled[0].shape[0],1))])
+
+
+# %%
+
+# %%
+
+w0 = bnn_model.layers[1].weights[0]
+
+mu_w0 = w0[:40]
+rho_w0 = w0[40:]
+sig_w0 = bijection_std_posterior(rho_w0)
+
+sig_w0
+# %%
+
+mu_w0
+# %%
