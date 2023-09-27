@@ -14,10 +14,15 @@ import sys
 import os
 
 sys.path.append(os.path.join('..', 'bll'))
+sys.path.append(os.path.join('..', 'Plots'))
 
 import tools
 
 from typing import List, Callable, Tuple, Optional
+import config_mpl
+
+export_figures = True
+export_dir = '../Plots/MultivariateToyExample/'
 
 # %% [markdown]
 # # Toy example
@@ -141,9 +146,9 @@ def prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
     return tf.keras.Sequential([
        tfpl.DistributionLambda(
             lambda t: 
-        # tfd.Independent(
-                tfd.Normal(loc = tf.zeros(n), scale= 1.0*tf.ones(n)),
-    #    reinterpreted_batch_ndims=1)
+        tfd.Independent(
+                tfd.Normal(loc = tf.zeros(n), scale= .5*tf.ones(n)),
+       reinterpreted_batch_ndims=1)
        )                  
   ])
 
@@ -155,10 +160,10 @@ def posterior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
     return tf.keras.Sequential([
         tfp.layers.VariableLayer(2 * n, dtype=dtype, initializer='normal'),
         tfp.layers.DistributionLambda(lambda t: 
-            # tfd.Independent(
+            tfd.Independent(
             tfd.Normal(loc=t[..., :n],
                 scale=bijection_std_posterior(t[..., n:])),
-            # reinterpreted_batch_ndims=1)
+            reinterpreted_batch_ndims=1)
             )
     ])
 
@@ -250,7 +255,7 @@ bnn_model.compile(
 
 savename = '02_bnn_model_weights.h5'
 savepath = os.path.join('.', 'results')
-if True:
+if False:
     hist = bnn_model.fit(
         x=[train_scaled[0], np.ones((train_scaled[0].shape[0], 1))],
         y=train_scaled[1],
@@ -267,7 +272,7 @@ else:
 # %%
 unscale_std = lambda scaled: scaler.scaler_y.scale_*scaled
 unscale = scaler.scaler_y.inverse_transform
-samples = 10
+samples = 50
 
 def sample_mean_and_std(model, x, samples=10):
     y_samp = [model([x, np.ones((x.shape[0],1))]).mean().numpy() for _ in range(samples)]
@@ -276,26 +281,35 @@ def sample_mean_and_std(model, x, samples=10):
     y_std = np.repeat(y_std[:,:, np.newaxis], samples, axis=2)
     return y_samp, y_std
 
-# Y_samp = [unscale(bnn_model.predict([true_scaled[0], np.ones((true_scaled[0].shape[0],1))])) for _ in range(samples)]
-# Y_samp = [unscale(bnn_model([true_scaled[0], np.ones((true_scaled[0].shape[0],1))]).mean().numpy()) for _ in range(samples)]
-# Y_samp = np.stack(Y_samp, axis=2)
-# Y_std = unscale_std(bnn_model([true_scaled[0], np.ones((true_scaled[0].shape[0],1))]).stddev().numpy())
-# Y_std = np.repeat(Y_std[:,:, np.newaxis], samples, axis=2)
 
 Y_samp, Y_std = sample_mean_and_std(bnn_model, true_scaled[0], samples=samples)
 
-
 y_p3std = np.max(Y_samp + 3*Y_std, axis=2)
 y_m3std = np.min(Y_samp - 3*Y_std, axis=2)
-
+# %%
 fig, ax = get_figure()
-ax[0].plot(true[0], Y_samp[:,0,:], color='C0', alpha=0.5)
-ax[1].plot(true[0], Y_samp[:,1,:], color='C0', alpha=0.5)
-ax[0].fill_between(true[0].flatten(), y_m3std[:,0], y_p3std[:,0], color='C0', alpha=0.3)
+ax[0].plot(true[0], Y_samp[:,0,:], color='C0', alpha=0.2)
+ax[0].plot([],[], color='C0', alpha=0.2, label=r'$\bar{\vy}^{(i)}$')
+ax[1].plot(true[0], Y_samp[:,1,:], color='C0', alpha=0.2)
+ax[0].fill_between(true[0].flatten(), y_m3std[:,0], y_p3std[:,0], color='C0', alpha=0.3, label=r'$\pm 3\sigma$')
 ax[1].fill_between(true[0].flatten(), y_m3std[:,1], y_p3std[:,1], color='C0', alpha=0.3)
+# for i in range(samples):
+    # ax[0].fill_between(true[0].flatten(), Y_samp[:,0,i]-3*Y_std[:,0,i],Y_samp[:,0,i]-3*Y_std[:,0,i], color='C0', alpha=0.1, edgecolor=None)
+    # ax[1].fill_between(true[0].flatten(), Y_samp[:,1,i]-3*Y_std[:,1,i],Y_samp[:,1,i]-3*Y_std[:,1,i], color='C0', alpha=0.1, edgecolor=None)
 
-# ax[0].set_ylim([-1.5, 1.5])
-# ax[1].set_ylim([-2, 2])
+ax[0].legend()
+
+fig.align_ylabels()
+legend = ax[0].legend(ncol=3, loc='upper center', bbox_to_anchor=(.5, 1.5), fancybox=True, framealpha=1)
+fig.tight_layout(pad=0.2)
+
+
+if export_figures:
+    name = 'bnn_vi_toy_example'
+    fig.savefig(f'{export_dir}{name}.pdf')
+    fig.savefig(f'{export_dir}{name}.pgf')
+
+
 # %% [markdown]
 # ## Check estimated noise variances
 
@@ -311,7 +325,7 @@ print(f'True noise std:      {np.round(sigma_noise, 3)}')
 
 # %%
 
-samples = 50
+samples = 100
 Y_samp, Y_std = sample_mean_and_std(bnn_model, test_scaled[0], samples=samples)
 
 dY = Y_samp-test[1][:,:,np.newaxis]
@@ -322,7 +336,22 @@ prob = np.exp(-.5*(dY / Y_std)**2)*1/(np.sqrt(2*np.pi)*Y_std)
 prob_mean = np.mean(prob, axis=2)
 log_prob = np.log(prob_mean)
 
+print(f'Log-probability of test data: {np.mean(log_prob):.3f}')
+
+# %% 
+samples = 100
+Y_samp, Y_std = sample_mean_and_std(bnn_model, train_scaled[0], samples=samples)
+
+dY = Y_samp-train[1][:,:,np.newaxis]
+
+prob = np.exp(-.5*(dY / Y_std)**2)*1/(np.sqrt(2*np.pi)*Y_std)
+
+# Average over sample distribution
+prob_mean = np.mean(prob, axis=2)
+log_prob = np.log(prob_mean)
+
 print(f'Log-probability of training data: {np.mean(log_prob):.3f}')
+
 
 # %% [markdown]
 # ## Understanding the prior and posterior distributions
@@ -344,5 +373,15 @@ ax.scatter(0.5, 0, color='C1', label='prior', s=100, marker='x')
 ax.legend()
 ax.set_title('Posterior vs prior distribution of weights')
 
+# %% [markdown]
+# Check if log-prob is computing what I expect ... 
 
 # %%
+tf.random.set_seed(00)
+y_pred =bnn_model([train_scaled[0], np.ones((train_scaled[0].shape[0],1))])
+tf.reduce_mean(y_pred.log_prob(train_scaled[1]))
+# %%
+lp = -.5*((y_pred.mean()-train_scaled[1])/y_pred.stddev())**2-.5*np.log(2*np.pi*y_pred.stddev()**2)
+np.mean(np.sum(lp,axis=1))
+# %%
+
