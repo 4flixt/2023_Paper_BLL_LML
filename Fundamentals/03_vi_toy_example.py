@@ -272,7 +272,7 @@ else:
 # %%
 unscale_std = lambda scaled: scaler.scaler_y.scale_*scaled
 unscale = scaler.scaler_y.inverse_transform
-samples = 50
+samples = 100
 
 def sample_mean_and_std(model, x, samples=10):
     y_samp = [model([x, np.ones((x.shape[0],1))]).mean().numpy() for _ in range(samples)]
@@ -284,18 +284,24 @@ def sample_mean_and_std(model, x, samples=10):
 
 Y_samp, Y_std = sample_mean_and_std(bnn_model, true_scaled[0], samples=samples)
 
-y_p3std = np.max(Y_samp + 3*Y_std, axis=2)
-y_m3std = np.min(Y_samp - 3*Y_std, axis=2)
+# Compute mean and standard deviation of the Gaussian mixture
+Y_mix_mean = np.mean(Y_samp, axis=2)
+Y_mix_std = np.mean(Y_std, axis=2) + np.mean(Y_samp**2, axis=2) -np.mean(Y_samp, axis=2)**2
+y_mix_m_3std = Y_mix_mean - 3*Y_mix_std
+y_mix_p_3std = Y_mix_mean + 3*Y_mix_std
+
+
 # %%
 fig, ax = get_figure()
 ax[0].plot(true[0], Y_samp[:,0,:], color='C0', alpha=0.2)
 ax[0].plot([],[], color='C0', alpha=0.2, label=r'$\bar{\vy}^{(i)}$')
 ax[1].plot(true[0], Y_samp[:,1,:], color='C0', alpha=0.2)
-ax[0].fill_between(true[0].flatten(), y_m3std[:,0], y_p3std[:,0], color='C0', alpha=0.3, label=r'$\pm 3\sigma$')
-ax[1].fill_between(true[0].flatten(), y_m3std[:,1], y_p3std[:,1], color='C0', alpha=0.3)
-# for i in range(samples):
-    # ax[0].fill_between(true[0].flatten(), Y_samp[:,0,i]-3*Y_std[:,0,i],Y_samp[:,0,i]-3*Y_std[:,0,i], color='C0', alpha=0.1, edgecolor=None)
-    # ax[1].fill_between(true[0].flatten(), Y_samp[:,1,i]-3*Y_std[:,1,i],Y_samp[:,1,i]-3*Y_std[:,1,i], color='C0', alpha=0.1, edgecolor=None)
+
+ax[0].plot(true[0], Y_mix_mean[:,0], color='C1', alpha=1, label=r'$\bar{\vy}$')
+ax[0].fill_between(true[0].flatten(), y_mix_m_3std[:,0], y_mix_p_3std[:,0], color='C1', alpha=0.3, label=r'$\pm 3\sigma$')
+
+ax[1].plot(true[0], Y_mix_mean[:,1], color='C1', alpha=1)
+ax[1].fill_between(true[0].flatten(), y_mix_m_3std[:,1], y_mix_p_3std[:,1], color='C1', alpha=0.3, label=r'$\pm 3\sigma$')
 
 ax[0].legend()
 
