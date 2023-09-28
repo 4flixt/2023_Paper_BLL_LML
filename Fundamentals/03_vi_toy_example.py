@@ -21,7 +21,7 @@ import tools
 from typing import List, Callable, Tuple, Optional
 import config_mpl
 
-export_figures = True
+export_figures = False
 export_dir = '../Plots/MultivariateToyExample/'
 
 # %% [markdown]
@@ -73,6 +73,16 @@ get_figure()
 
 # %%
 
+def bijection_std(x: tf.Tensor, a=1.0, b=0.0) -> tf.Tensor:
+    """
+    Returns a transformation of the input tensor x such that the output is positive.
+    """
+    return a * tf.math.exp(x+b)
+
+# Define two parameterizations of the bijection function
+bijection_std_output    = partial(bijection_std, a=1.0,   b=0.0)
+bijection_std_posterior = partial(bijection_std, a=0.003, b=-2.0)
+
 def get_output_noise_model(n_y: int) -> tf.keras.Model:
     """
     Returns a keras model that takes as input:
@@ -87,7 +97,7 @@ def get_output_noise_model(n_y: int) -> tf.keras.Model:
     rho_y = tf.keras.Input(shape=(1,))
 
     # sigma_y is created as a variable layer 
-    sig_y = tfpl.VariableLayer(shape=(n_y,), initializer='zeros', activation=tf.math.exp)(rho_y)*rho_y
+    sig_y = tfpl.VariableLayer(shape=(n_y,), initializer='zeros', activation=bijection_std_output)(rho_y)*rho_y
 
     cat_mu_y_and_sig_y = tf.keras.layers.Concatenate(axis=1)([mu_y, sig_y])
 
@@ -102,16 +112,6 @@ def get_output_noise_model(n_y: int) -> tf.keras.Model:
 
 
 # %%
-
-def bijection_std(x: tf.Tensor, a=1.0, b=0.0) -> tf.Tensor:
-    """
-    Returns a transformation of the input tensor x such that the output is positive.
-    """
-    return a * tf.math.exp(x+b)
-
-# Define two parameterizations of the bijection function
-bijection_std_output    = partial(bijection_std, a=1.0,   b=0.0)
-bijection_std_posterior = partial(bijection_std, a=0.003, b=-2.0)
 
 
 def trainable_sig_prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
@@ -146,9 +146,9 @@ def prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
     return tf.keras.Sequential([
        tfpl.DistributionLambda(
             lambda t: 
-        tfd.Independent(
+        # tfd.Independent(
                 tfd.Normal(loc = tf.zeros(n), scale= .5*tf.ones(n)),
-       reinterpreted_batch_ndims=1)
+    #    reinterpreted_batch_ndims=1)
        )                  
   ])
 
@@ -160,10 +160,10 @@ def posterior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
     return tf.keras.Sequential([
         tfp.layers.VariableLayer(2 * n, dtype=dtype, initializer='normal'),
         tfp.layers.DistributionLambda(lambda t: 
-            tfd.Independent(
+            # tfd.Independent(
             tfd.Normal(loc=t[..., :n],
                 scale=bijection_std_posterior(t[..., n:])),
-            reinterpreted_batch_ndims=1)
+            # reinterpreted_batch_ndims=1)
             )
     ])
 
@@ -253,16 +253,15 @@ bnn_model.compile(
 )
 # %%
 
-savename = '02_bnn_model_weights.h5'
+savename = '03_bnn_model_weights.h5'
 savepath = os.path.join('.', 'results')
-if False:
+if True:
     hist = bnn_model.fit(
         x=[train_scaled[0], np.ones((train_scaled[0].shape[0], 1))],
         y=train_scaled[1],
         epochs=2000,
         verbose=0,
         batch_size=batch_size,
-        # callbacks=[early_stopping_callback],
     )
     bnn_model.save_weights(os.path.join(savepath, savename))
 else:
@@ -275,7 +274,7 @@ unscale = scaler.scaler_y.inverse_transform
 samples = 100
 
 def sample_mean_and_std(model, x, samples=10):
-    y_samp = [model([x, np.ones((x.shape[0],1))]).mean().numpy() for _ in range(samples)]
+    y_samp = [unscale(model([x, np.ones((x.shape[0],1))]).mean().numpy()) for _ in range(samples)]
     y_samp = np.stack(y_samp, axis=2)
     y_std = model([x, np.ones((x.shape[0],1))]).stddev().numpy()
     y_std = np.repeat(y_std[:,:, np.newaxis], samples, axis=2)
@@ -291,7 +290,6 @@ y_mix_m_3std = Y_mix_mean - 3*Y_mix_std
 y_mix_p_3std = Y_mix_mean + 3*Y_mix_std
 
 
-# %%
 fig, ax = get_figure()
 ax[0].plot(true[0], Y_samp[:,0,:], color='C0', alpha=0.2)
 ax[0].plot([],[], color='C0', alpha=0.2, label=r'$\bar{\vy}^{(i)}$')
@@ -340,11 +338,9 @@ prob = np.exp(-.5*(dY / Y_std)**2)*1/(np.sqrt(2*np.pi)*Y_std)
 
 # Average over sample distribution
 prob_mean = np.mean(prob, axis=2)
-log_prob = np.log(prob_mean)
+log_prob_test = np.log(prob_mean)
 
-print(f'Log-probability of test data: {np.mean(log_prob):.3f}')
 
-# %% 
 samples = 100
 Y_samp, Y_std = sample_mean_and_std(bnn_model, train_scaled[0], samples=samples)
 
@@ -354,9 +350,12 @@ prob = np.exp(-.5*(dY / Y_std)**2)*1/(np.sqrt(2*np.pi)*Y_std)
 
 # Average over sample distribution
 prob_mean = np.mean(prob, axis=2)
-log_prob = np.log(prob_mean)
+log_prob_train = np.log(prob_mean)
 
-print(f'Log-probability of training data: {np.mean(log_prob):.3f}')
+# %%
+
+print(f'Log-probability of test data: {np.mean(log_prob_test):.3f}')
+print(f'Log-probability of training data: {np.mean(log_prob_train):.3f}')
 
 
 # %% [markdown]
