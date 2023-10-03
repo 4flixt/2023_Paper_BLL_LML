@@ -1,3 +1,6 @@
+# %% [markdown]
+# # Variational inference with Bayes by Backprop to train a Bayesian neural network
+# Import the required packages.
 # %%
 import tensorflow as tf
 import tensorflow_probability as tfp
@@ -25,7 +28,7 @@ export_figures = False
 export_dir = '../Plots/MultivariateToyExample/'
 
 # %% [markdown]
-# # Toy example
+# # Generate and Display data for the investigated example
 
 # %%
 
@@ -110,9 +113,12 @@ def get_output_noise_model(n_y: int) -> tf.keras.Model:
 
     return keras.models.Model(inputs=[mu_y, rho_y], outputs=dist)
 
-
+# %% [markdown]
+# # Variational inference with Bayes by Backprop
+# To train a full BNN with Bayes by Backprop, 
+# we need to specify a prior and a posterior distribution for each weight and bias in the network.
+# We can then create the BNN with the ``tfp.layers.DenseVariational`` layer.
 # %%
-
 
 def trainable_sig_prior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
     """
@@ -166,6 +172,10 @@ def posterior(kernel_size: int, bias_size: int, dtype=None) -> tf.keras.Model:
             # reinterpreted_batch_ndims=1)
             )
     ])
+
+# %% [markdown]
+# ## Create the BNN model  
+# We create the same architecture as for the NN with BLL.
 
 # %%
 # Fix seeds
@@ -233,7 +243,11 @@ def get_bnn_model(m, full_bnn = True):
 
     return output_with_noise_model
 
+# %% [markdown]
+# We can now get the model, check the architecture and compile it.
+# For the compilation, we define the loss function as the negative log-likelihood of the data.
 
+# %%
 
 n_batches = 1
 batch_size = train[0].shape[0]//n_batches
@@ -251,11 +265,12 @@ bnn_model.compile(
     loss=negloglik,
     metrics=['mse'],
 )
-# %%
 
+# %%
 savename = '03_bnn_model_weights.h5'
 savepath = os.path.join('.', 'results')
-if True:
+
+if not os.path.exists(os.path.join(savepath, savename)):
     hist = bnn_model.fit(
         x=[train_scaled[0], np.ones((train_scaled[0].shape[0], 1))],
         y=train_scaled[1],
@@ -267,6 +282,12 @@ if True:
 else:
     bnn_model.load_weights(os.path.join(savepath, savename))
 
+# %% [markdown]
+# ## Plot the results
+# For the plot we sample the posterior distribution
+# of the weights and biases of the NN and predict the output for each sample.
+# Additionally, we consider the output as a Gaussian mixture model and 
+# compute its mean and standard deviation.
 
 # %%
 unscale_std = lambda scaled: scaler.scaler_y.scale_*scaled
@@ -274,14 +295,16 @@ unscale = scaler.scaler_y.inverse_transform
 samples = 100
 
 def sample_mean_and_std(model, x, samples=10):
-    y_samp = [unscale(model([x, np.ones((x.shape[0],1))]).mean().numpy()) for _ in range(samples)]
+    x_scaled =scaler.scale(X=x)[0]
+    y_samp = [unscale(model([x_scaled, np.ones((x.shape[0],1))]).mean().numpy()) for _ in range(samples)]
     y_samp = np.stack(y_samp, axis=2)
     y_std = model([x, np.ones((x.shape[0],1))]).stddev().numpy()
     y_std = np.repeat(y_std[:,:, np.newaxis], samples, axis=2)
     return y_samp, y_std
 
+tf.random.set_seed(99)
 
-Y_samp, Y_std = sample_mean_and_std(bnn_model, true_scaled[0], samples=samples)
+Y_samp, Y_std = sample_mean_and_std(bnn_model, true[0], samples=samples)
 
 # Compute mean and standard deviation of the Gaussian mixture
 Y_mix_mean = np.mean(Y_samp, axis=2)
@@ -302,6 +325,8 @@ ax[1].plot(true[0], Y_mix_mean[:,1], color='C1', alpha=1)
 ax[1].fill_between(true[0].flatten(), y_mix_m_3std[:,1], y_mix_p_3std[:,1], color='C1', alpha=0.3, label=r'$\pm 3\sigma$')
 
 ax[0].legend()
+ax[0].set_ylim([-2.2, 2.2])
+ax[1].set_ylim([-2.2, 2.2])
 
 fig.align_ylabels()
 legend = ax[0].legend(ncol=3, loc='upper center', bbox_to_anchor=(.5, 1.5), fancybox=True, framealpha=1)
@@ -312,6 +337,7 @@ if export_figures:
     name = 'bnn_vi_toy_example'
     fig.savefig(f'{export_dir}{name}.pdf')
     fig.savefig(f'{export_dir}{name}.pgf')
+
 
 
 # %% [markdown]
@@ -328,29 +354,22 @@ print(f'True noise std:      {np.round(sigma_noise, 3)}')
 """
 
 # %%
+def lpd_gmm(model, data, samples=100):
+    Y_samp, Y_std = sample_mean_and_std(model, data[0], samples=samples)
 
-samples = 100
-Y_samp, Y_std = sample_mean_and_std(bnn_model, test_scaled[0], samples=samples)
+    dY = Y_samp-data[1][:,:,np.newaxis]
 
-dY = Y_samp-test[1][:,:,np.newaxis]
+    prob = np.exp(-.5*(dY / Y_std)**2)*1/(np.sqrt(2*np.pi)*Y_std)
 
-prob = np.exp(-.5*(dY / Y_std)**2)*1/(np.sqrt(2*np.pi)*Y_std)
+    # Average over sample distribution
+    prob_mean = np.mean(prob, axis=2)
+    log_prob = np.log(prob_mean)
 
-# Average over sample distribution
-prob_mean = np.mean(prob, axis=2)
-log_prob_test = np.log(prob_mean)
+    return log_prob
 
-
-samples = 100
-Y_samp, Y_std = sample_mean_and_std(bnn_model, train_scaled[0], samples=samples)
-
-dY = Y_samp-train[1][:,:,np.newaxis]
-
-prob = np.exp(-.5*(dY / Y_std)**2)*1/(np.sqrt(2*np.pi)*Y_std)
-
-# Average over sample distribution
-prob_mean = np.mean(prob, axis=2)
-log_prob_train = np.log(prob_mean)
+tf.random.set_seed(99)
+log_prob_train = lpd_gmm(bnn_model, train, samples=100)
+log_prob_test = lpd_gmm(bnn_model, test, samples=100)
 
 # %%
 
@@ -389,4 +408,4 @@ tf.reduce_mean(y_pred.log_prob(train_scaled[1]))
 lp = -.5*((y_pred.mean()-train_scaled[1])/y_pred.stddev())**2-.5*np.log(2*np.pi*y_pred.stddev()**2)
 np.mean(np.sum(lp,axis=1))
 # %%
-
+# %%
