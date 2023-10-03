@@ -1,0 +1,2 @@
+Fundamentals/results/*.h5 filter=lfs diff=lfs merge=lfs -text
+Fundamentals/03_vi_toy_example.ipynb filter=lfs diff=lfs merge=lfs -text

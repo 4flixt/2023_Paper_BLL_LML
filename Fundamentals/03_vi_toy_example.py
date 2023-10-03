@@ -378,7 +378,9 @@ print(f'Log-probability of training data: {np.mean(log_prob_train):.3f}')
 
 
 # %% [markdown]
-# ## Understanding the prior and posterior distributions
+# ## Investigating the posterior distribution of the weights
+# We compare the prior and posterior distribution of the weights.
+# This is conducted for an arbitrary layer of the network.
 
 # %%
 
@@ -397,15 +399,5 @@ ax.scatter(0.5, 0, color='C1', label='prior', s=100, marker='x')
 ax.legend()
 ax.set_title('Posterior vs prior distribution of weights')
 
-# %% [markdown]
-# Check if log-prob is computing what I expect ... 
 
-# %%
-tf.random.set_seed(00)
-y_pred =bnn_model([train_scaled[0], np.ones((train_scaled[0].shape[0],1))])
-tf.reduce_mean(y_pred.log_prob(train_scaled[1]))
-# %%
-lp = -.5*((y_pred.mean()-train_scaled[1])/y_pred.stddev())**2-.5*np.log(2*np.pi*y_pred.stddev()**2)
-np.mean(np.sum(lp,axis=1))
-# %%
 # %%
